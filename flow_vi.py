@@ -1,12 +1,13 @@
-from typing import Callable, NamedTuple, Protocol, Tuple
+from typing import Callable, List, NamedTuple, Protocol, Tuple
 
 import jax
-from jax import lax, jit
 import jax.numpy as jnp
-from optax import GradientTransformation, OptState
-
+import jax.scipy as jscipy
+import optax
 from blackjax.base import VIAlgorithm
-from blackjax.types import Array, ArrayLikeTree, ArrayTree, PRNGKey
+from blackjax.types import Array, ArrayTree, PRNGKey
+from jax import lax, random
+from optax import GradientTransformation, OptState
 
 __all__ = [
     "FVIState",
@@ -19,7 +20,8 @@ __all__ = [
 
 
 class FVIState(NamedTuple):
-    parameters: ArrayTree
+    base_params: Tuple[Array, Array]
+    bijector_params: List[dict]
     opt_state: OptState
 
 
@@ -27,19 +29,161 @@ class FVIInfo(NamedTuple):
     elbo: float
 
 
+class Bijector(Protocol):
+    """A parameterized bijective transformation with differentiable forward and inverse."""
+
+    def fwd_and_log_det(self, x: Array, params: dict) -> Tuple[Array, Array]: ...
+
+    def inv_and_log_det(self, y: Array, params: dict) -> Tuple[Array, Array]: ...
+
+
+class Distribution(Protocol):
+    """A probability distribution with sample and log density methods."""
+
+    def sample(
+        self, rng_key: PRNGKey, params: ArrayTree, num_samples: int
+    ) -> ArrayTree: ...
+
+    def log_density(self, params: ArrayTree, samples: ArrayTree) -> ArrayTree: ...
+
+
+class StandardNormal(Distribution):
+    @staticmethod
+    def sample(
+        rng_key: PRNGKey, params: Tuple[Array, Array], num_samples: int
+    ) -> Array:
+        mean, log_std = params
+        return mean + jnp.exp(log_std) * random.normal(
+            rng_key, (num_samples,) + mean.shape
+        )
+
+    @staticmethod
+    def log_density(params: Tuple[Array, Array], samples: Array) -> Array:
+        mean, log_std = params
+        return jscipy.stats.norm.logpdf(samples, mean, jnp.exp(log_std)).sum(axis=-1)
+
+
+class RealNVP(Bijector):
+    """A RealNVP neural network bijector with masked affine coupling layers."""
+
+    def __init__(self, dim: int):
+        self.mask = jnp.arange(dim) % 2
+
+    @staticmethod
+    def mlp(inputs: Array, params: List[Tuple[Array, Array]]) -> Array:
+        x = inputs
+        for w, b in params[:-1]:
+            x = jax.nn.relu(jnp.dot(x, w) + b)
+        w, b = params[-1]
+        return jnp.dot(x, w) + b
+
+    def fwd_and_log_det(self, x: Array, params: dict) -> Tuple[Array, Array]:
+        x_masked = x * self.mask
+        x_pass = x * (1 - self.mask)
+
+        s = self.mlp(params["scale"], x_masked)
+        t = self.mlp(params["translate"], x_masked)
+
+        exp_s = jnp.exp(s)
+        y = x_masked + (1 - self.mask) * (x_pass * exp_s + t)
+        log_det = jnp.sum((1 - self.mask) * s, axis=-1)
+
+        return y, log_det
+
+    def inv_and_log_det(self, y: Array, params: dict) -> Tuple[Array, Array]:
+        y_masked = y * self.mask
+        y_pass = y * (1 - self.mask)
+
+        s = self.mlp(params["scale"], y_masked)
+        t = self.mlp(params["translate"], y_masked)
+
+        exp_neg_s = jnp.exp(-s)
+        x = y_masked + (1 - self.mask) * (y_pass - t) * exp_neg_s
+        log_det = -jnp.sum((1 - self.mask) * s, axis=-1)
+
+        return x, log_det
+
+
+class ComposedBijector(Bijector):
+    """Compose multiple bijectors into a single bijector."""
+
+    def __init__(self, bijectors: Tuple[Bijector, ...]):
+        self.bijectors = bijectors
+
+    def fwd_and_log_det(
+        self, x: Array, params: Tuple[dict, ...]
+    ) -> Tuple[Array, Array]:
+        total_log_det = jnp.zeros_like(x)
+        for bijector, bijector_params in zip(self.bijectors, params):
+            x, log_det = bijector.fwd_and_log_det(x, bijector_params)
+            total_log_det += log_det
+        return x, total_log_det
+
+    def inv_and_log_det(
+        self, y: Array, params: Tuple[dict, ...]
+    ) -> Tuple[Array, Array]:
+        total_log_det = jnp.zeros_like(y)
+        for bijector, bijector_params in zip(
+            reversed(self.bijectors), reversed(params)
+        ):
+            y, log_det = bijector.inv_and_log_det(y, bijector_params)
+            total_log_det += log_det
+        return y, total_log_det
+
+
+class NormalizingFlow(Distribution):
+    """A normalizing flow distribution using a base distribution and a bijector."""
+
+    def __init__(self, base_distribution: Distribution, bijector: Bijector):
+        self.base_distribution = base_distribution
+        self.bijector = bijector
+
+    def sample(self, rng_key: PRNGKey, params: FVIState, num_samples: int) -> Array:
+        base_params, bijector_params = params
+        base_samples = self.base_distribution.sample(rng_key, base_params, num_samples)
+        samples, _ = self.bijector.fwd_and_log_det(base_samples, bijector_params)
+        return samples
+
+    def log_density(self, params: FVIState, samples: Array) -> Array:
+        base_params, bijector_params = params
+        base_x, log_det = self.bijector.inv_and_log_det(samples, bijector_params)
+        base_log_prob = self.base_distribution.log_density(base_params, base_x)
+        return base_log_prob - log_det
+
+
+def init_layer_params(
+    key: PRNGKey, input_dim: int, hidden_dims: List[int], output_dim: int
+) -> ArrayTree:
+    """Initialize parameters for a single layer of RealNVP, including both scale and translate networks."""
+    scale_key, translate_key = random.split(key)
+
+    def init_network(net_key: PRNGKey) -> ArrayTree:
+        keys = random.split(net_key, len(hidden_dims) + 1)
+        dims = [input_dim] + hidden_dims + [output_dim]
+
+        return [
+            (random.normal(k, (m, n)) / jnp.sqrt(m), jnp.zeros(n))
+            for k, m, n in zip(keys, dims[:-1], dims[1:])
+        ]
+
+    return {"scale": init_network(scale_key), "translate": init_network(translate_key)}
+
+
 def init(
-    initial_parameters: ArrayLikeTree,
+    rng_key: PRNGKey,
+    dim: int,
+    hidden_dims: List[int],
+    num_layers: int,
     optimizer: GradientTransformation,
-    *optimizer_args,
-    **optimizer_kwargs,
 ) -> FVIState:
     """Initialize the flow VI state."""
-    opt_state = optimizer.init(
-        initial_parameters, 
-        *optimizer_args, 
-        **optimizer_kwargs
-    )
-    return FVIState(initial_parameters, opt_state)
+    base_params = (jnp.zeros(dim), jnp.zeros(dim))  # (mean, log_std)
+
+    keys = random.split(rng_key, num_layers)
+    bijector_params = [init_layer_params(key, dim, hidden_dims, dim) for key in keys]
+
+    opt_state = optimizer.init(bijector_params)
+    return FVIState(base_params, bijector_params, opt_state)
 
 
 def step(
@@ -49,198 +193,114 @@ def step(
     optimizer: GradientTransformation,
     num_samples: int = 1000,
     stl_estimator: bool = True,
-) -> tuple[FVIState, FVIInfo]:
-    """Approximate the target density using flow VI.
+) -> Tuple[FVIState, FVIInfo]:
+    """Approximate the target density using flow VI."""
 
-    Parameters
-    ----------
-    rng_key
-        Key for JAX's pseudo-random number generator.
-    state
-        Current state of the normalizing flow approximation.
-    logdensity_fn
-        Function that represents the target log-density to approximate.
-    optimizer
-        Optax `GradientTransformation` to be used for optimization.
-    num_samples
-        The number of samples that are taken from the approximation
-        at each step to compute the Kullback-Leibler divergence between
-        the approximation and the target log-density.
-    stl_estimator
-        Whether to use stick-the-landing (STL) gradient estimator :cite:p:`roeder2017sticking` for gradient estimation.
-        The STL estimator has lower gradient variance by removing the score function term
-        from the gradient. It is suggested by :cite:p:`agrawal2020advances` to always keep it in order for better results.
+    def kl_divergence_fn(bijector_params):
+        samples = sample(rng_key, state, num_samples)
 
-    """
+        bijectors_list = [RealNVP(_get_pytree_input_dim(p)) for p in bijector_params]
+        flow = NormalizingFlow(StandardNormal(), ComposedBijector(bijectors_list))
+        log_q = flow.log_density((state.base_params, bijector_params), samples)
 
-    parameters = state.parameters
+        log_p = logdensity_fn(samples)
+        log_p = lax.stop_gradient(log_p) if stl_estimator else log_p
 
-    # TODO
-    def kl_divergence_fn(parameters):
-        pass
+        kl = jnp.mean(log_q - log_p)
+        return kl
 
-    elbo, elbo_grad = jax.value_and_grad(kl_divergence_fn)(parameters)
-    updates, new_opt_state = optimizer.update(elbo_grad, state.opt_state, parameters)
-    new_parameters = jax.tree.map(lambda p, u: p + u, parameters, updates)
-    new_state = FVIState(new_parameters, new_opt_state)
-    return new_state, FVIInfo(elbo)
+    elbo, elbo_grad = jax.value_and_grad(kl_divergence_fn)(state.bijector_params)
+    updates, new_opt_state = optimizer.update(
+        elbo_grad, state.opt_state, state.bijector_params
+    )
+    new_bijector_params = jax.tree_util.tree.map(
+        lambda p, u: p + u, state.bijector_params, updates
+    )
+    new_state = FVIState(state.base_params, new_bijector_params, new_opt_state)
+    return new_state, FVIInfo(-elbo)
 
 
-# TODO
-def sample(rng_key: PRNGKey, state: FVIState, num_samples: int = 1):
-    """Sample from the mean-field approximation."""
-    pass
+def sample(rng_key: PRNGKey, state: FVIState, num_samples: int = 1) -> Array:
+    """Sample from the normalizing flow approximation of the target distribution."""
+    bijectors_list = [RealNVP(_get_pytree_input_dim(p)) for p in state.bijector_params]
+    flow = NormalizingFlow(StandardNormal(), ComposedBijector(bijectors_list))
+    return flow.sample(rng_key, (state.base_params, state.bijector_params), num_samples)
 
 
 def as_top_level_api(
     logdensity_fn: Callable,
     optimizer: GradientTransformation,
+    dim: int,
+    hidden_dims: List[int],
+    num_layers: int,
     num_samples: int = 1000,
 ):
-    """High-level implementation of Flow Variational Inference.
+    """High-level implementation of Flow Variational Inference."""
 
-    Parameters
-    ----------
-    logdensity_fn
-        A function that represents the log-density function associated with
-        the distribution we want to sample from.
-    optimizer
-        Optax optimizer to use to optimize the ELBO.
-    num_samples
-        Number of samples to take at each step to optimize the ELBO.
+    def init_fn(rng_key: PRNGKey) -> FVIState:
+        return init(rng_key, dim, hidden_dims, num_layers, optimizer)
 
-    Returns
-    -------
-    A ``VIAlgorithm``.
-
-    """
-
-    def init_fn(position: ArrayLikeTree):
-        return init(position, optimizer)
-
-    def step_fn(rng_key: PRNGKey, state: FVIState) -> tuple[FVIState, FVIInfo]:
+    def step_fn(rng_key: PRNGKey, state: FVIState) -> Tuple[FVIState, FVIInfo]:
         return step(rng_key, state, logdensity_fn, optimizer, num_samples)
 
-    def sample_fn(rng_key: PRNGKey, state: FVIState, num_samples: int):
+    def sample_fn(rng_key: PRNGKey, state: FVIState, num_samples: int) -> Array:
         return sample(rng_key, state, num_samples)
 
     return VIAlgorithm(init_fn, step_fn, sample_fn)
 
 
-class Bijection(Protocol):
-    # why is one ArrayLikeTree and the other ArrayTree? Also should the return type be Tuple[ArrayTree, float]?
-    def forward(self, x: ArrayLikeTree, params: ArrayTree) -> Tuple[Array, Array]:
-        ...
-    
-    # why is one ArrayLikeTree and the other ArrayTree? Also should the return type be Tuple[ArrayTree, float]?
-    def inverse(self, y: ArrayLikeTree, params: ArrayTree) -> Tuple[Array, Array]:
-        ...
+def _get_pytree_input_dim(params: ArrayTree) -> int:
+    """Extract the input dimension from a PyTree of parameters.
+
+    This function assumes the input dimension is represented by the first
+    dimension of the first array (weight matrix) found in the tree.
+    """
+
+    def is_array_leaf(x):
+        return isinstance(x, (jnp.ndarray, Array))
+
+    def get_first_array(tree):
+        arrays = jax.tree.leaves(tree, is_leaf=is_array_leaf)
+        if not arrays:
+            raise ValueError("No arrays found in the parameter tree.")
+        return arrays[0]
+
+    first_array = get_first_array(params)
+    if first_array.ndim < 2:
+        raise ValueError("Expected at least 2D array for weight matrix.")
+    return first_array.shape[0]
 
 
-class Distribution(Protocol):
-    def sample(self, rng_key: PRNGKey, params: ArrayTree, num_samples: int) -> ArrayTree:
-        ...
+if __name__ == "__main__":
+    # Define target distribution
+    def target_log_prob(x):
+        return -0.5 * jnp.sum(x**2)
 
-    # should this return a float? depends on samples...
-    def log_density(self, params: ArrayTree, samples: ArrayTree) -> ArrayTree:
-        ...
+    # Params
+    dim = 2
+    hidden_dims = [32, 32]
+    num_layers = 5
+    learning_rate = 1e-3
+    optimizer = optax.adam(learning_rate)
 
+    vi_algorithm = as_top_level_api(
+        target_log_prob, optimizer, dim, hidden_dims, num_layers
+    )
 
-class RealNVP(Bijection):
-    def __init__(self, dim: int, hidden_dims: Tuple[int, ...]):
-        self.dim = dim
-        self.mask = jnp.arange(self.dim) % 2
-        self.hidden_dims = hidden_dims
+    # Initialize
+    rng_key = random.PRNGKey(0)
+    state = init(rng_key, dim, hidden_dims, num_layers, optimizer)
 
-    @staticmethod
-    @jax.jit
-    def mlp(params: ArrayTree, inputs: ArrayLikeTree) -> Array:
-        x = inputs
-        for w, b in params[:-1]:
-            x = jax.nn.relu(jnp.dot(x, w) + b)
-        w, b = params[-1]
-        return jnp.dot(x, w) + b
+    # Training loop
+    # @jax.jit
+    def train_step(rng_key, state):
+        return step(rng_key, state, target_log_prob, optimizer)
 
-    @jax.jit
-    def forward(self, x: ArrayLikeTree, params: ArrayTree) -> Tuple[Array, Array]:
-        x_masked = x * self.mask
-        x_pass = x * (1 - self.mask)
+    for i in range(1000):
+        rng_key, subkey = random.split(rng_key)
+        state, info = train_step(subkey, state)
+        if i % 100 == 0:
+            print(f"Step {i}, ELBO: {info.elbo}")
 
-        s = self.mlp(params['scale'], x_masked)
-        t = self.mlp(params['translate'], x_masked)
-
-        exp_s = jnp.exp(s)
-        y = x_masked + (1 - self.mask) * (x_pass * exp_s + t)
-        log_det_jacobian = jnp.sum((1 - self.mask) * s, axis=-1)
-
-        return y, log_det_jacobian
-
-    @jax.jit
-    def inverse(self, y: ArrayLikeTree, params: ArrayTree) -> Tuple[Array, Array]:
-        y_masked = y * self.mask
-        y_pass = y * (1 - self.mask)
-
-        s = self.mlp(params['scale'], y_masked)
-        t = self.mlp(params['translate'], y_masked)
-
-        exp_neg_s = jnp.exp(-s)
-        x = y_masked + (1 - self.mask) * (y_pass - t) * exp_neg_s
-        log_det_jacobian = -jnp.sum((1 - self.mask) * s, axis=-1)
-
-        return x, log_det_jacobian
-
-
-# are all these jits necessary here?
-@jit
-def compose_bijections(bijections: Tuple[Bijection, ...]) -> Bijection:
-    """Compose multiple bijections into a single bijection."""
-    
-    # why does this output Tupe[ArrayLikeTree, ArrayTree] instead of Tuple[ArrayTree, float]?
-    @jit
-    def forward(x: ArrayLikeTree, params: Tuple[ArrayTree, ...]) -> Tuple[ArrayLikeTree, ArrayTree]:
-        def body_fn(carry, bijection_and_params):
-            x, total_ldj = carry
-            bijection, bijection_params = bijection_and_params
-            y, ldj = bijection.forward(x, bijection_params)
-            return (y, total_ldj + ldj), None
-
-        init_ldj = jnp.zeros(jax.tree_util.tree_leaves(x)[0].shape[0])
-        (y, total_ldj), _ = lax.scan(body_fn, (x, init_ldj), (bijections, params))
-        return y, total_ldj
-
-    # why does this output Tupe[ArrayLikeTree, ArrayTree] instead of Tuple[ArrayTree, float]?
-    @jit
-    def inverse(y: ArrayLikeTree, params: Tuple[ArrayTree, ...]) -> Tuple[ArrayLikeTree, ArrayTree]:
-        def body_fn(carry, bijection_and_params):
-            y, total_ldj = carry
-            bijection, bijection_params = bijection_and_params
-            x, ldj = bijection.inverse(y, bijection_params)
-            return (x, total_ldj + ldj), None
-
-        init_ldj = jnp.zeros(jax.tree_util.tree_leaves(y)[0].shape[0])
-        (x, total_ldj), _ = lax.scan(body_fn, (y, init_ldj), (reversed(bijections), reversed(params)))
-        return x, total_ldj
-
-    return Bijection(forward=forward, inverse=inverse)
-
-
-# TODO: consider NOT using this class if need complex access to forward and 
-# inverse methods when computing the stick-the-landing gradient estimator
-class NormalizingFlow(Distribution):
-    def __init__(self, base_distribution: Distribution, bijection: Bijection):
-        self.base_distribution = base_distribution
-        self.bijection = bijection
-
-    @jit
-    def sample(self, rng_key: PRNGKey, params: ArrayLikeTree, num_samples: int) -> ArrayTree:
-        base_params, bijection_params = params
-        base_samples = self.base_distribution.sample(rng_key, base_params, num_samples)
-        samples, _ = self.bijection.forward(base_samples, bijection_params) 
-        return samples
-
-    @jit
-    def log_density(self, params: ArrayLikeTree, samples: ArrayLikeTree) -> ArrayTree:
-        base_params, bijection_params = params
-        base_x, ldj = self.bijection.inverse(samples, bijection_params)
-        base_log_prob = self.base_distribution.log_density(base_params, base_x)
-        return base_log_prob - ldj
+    # Sampling
+    samples = sample(random.PRNGKey(1), state, num_samples=10000)
