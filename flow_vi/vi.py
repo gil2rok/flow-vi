@@ -7,13 +7,12 @@ from blackjax.types import Array, ArrayLikeTree, ArrayTree, PRNGKey
 from jax import lax
 from optax import GradientTransformation, OptState
 
-from base import Distribution
+from .base import Distribution
 
 __all__ = [
     "VIState",
     "VIInfo",
     "sample",
-    "generate_meanfield_logdensity",
     "step",
     "as_top_level_api",
 ]

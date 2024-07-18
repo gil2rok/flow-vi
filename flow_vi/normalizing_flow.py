@@ -7,7 +7,7 @@ from jax import random
 from jax import scipy as jscipy
 from jax.typing import ArrayLike
 
-from base import Bijector, Distribution
+from .base import Bijector, Distribution
 
 
 def RealNVP() -> Bijector:

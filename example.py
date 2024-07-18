@@ -3,8 +3,8 @@ import jax.numpy as jnp
 import optax
 from jax import random
 
-from normalizing_flow import create_flow, create_gaussian
-from vi import as_top_level_api
+from flow_vi.normalizing_flow import create_flow, create_gaussian
+from flow_vi.vi import as_top_level_api
 
 
 def main():

@@ -1,1 +1,3 @@
 blackjax
+jax
+optax
