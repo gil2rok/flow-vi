@@ -2,7 +2,7 @@
 
 Cooking up something with variational inference and normalizing flows :robot: :repeat: :cook:.
 
-## Installation
+## Installation + Quick Start
 
 Clone this repository and install the dependencies -- [Jax](https://github.com/google/jax), [Blackjax](https://github.com/blackjax-devs/blackjax), [Optax](https://github.com/google-deepmind/optax) -- in your favorite virtual environment.
 
@@ -12,13 +12,13 @@ cd flow_vi
 pip install -r requirements.txt
 ```
 
-## Quick Start
-
-Run the example script to train a normalizing flow to learn a 2D Gaussian distribution.
+Then run the example script to train a RealNVP normalizing flow to learn a 2D Gaussian distribution. 
 
 ```bash
 python -m example.py
 ```
+
+The example runs on both GPU and CPU (thanks JAX!) but is much faster on a GPU.
 
 ## Resources
 
