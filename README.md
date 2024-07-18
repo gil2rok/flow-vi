@@ -12,7 +12,7 @@ cd flow_vi
 pip install -r requirements.txt
 ```
 
-## Getting Started
+## Quick Start
 
 Run the example script to train a normalizing flow to learn a 2D Gaussian distribution.
 
