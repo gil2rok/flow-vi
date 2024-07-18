@@ -2,6 +2,24 @@
 
 Cooking up something with variational inference and normalizing flows :robot: :repeat: :cook:.
 
+## Installation
+
+Clone this repository and install the dependencies (Jax, Blackjax, Optax) in your favorite virtual environment.
+
+```bash
+git clone https://github.com/gil2rok/flow_vi.git
+cd flow_vi
+pip install -r requirements.txt
+```
+
+## Getting Started
+
+Run the example script to train a normalizing flow to learn a 2D Gaussian distribution.
+
+```bash
+python -m example.py
+```
+
 ## Relevant Papers
 
 Recent Papers:
