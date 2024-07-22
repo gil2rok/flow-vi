@@ -7,7 +7,7 @@ Cooking up something with variational inference and normalizing flows :robot: :r
 Clone this repository and install the dependencies in your favorite virtual environment.
 
 ```bash
-git clone https://github.com/gil2rok/flow_vi.git
+git clone https://github.com/gil2rok/flow-vi.git
 cd flow_vi
 pip install -r requirements.txt
 ```
