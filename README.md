@@ -4,7 +4,7 @@ Cooking up something with variational inference and normalizing flows :robot: :r
 
 ## Installation + Quick Start
 
-Clone this repository and install the dependencies -- [Jax](https://github.com/google/jax), [Blackjax](https://github.com/blackjax-devs/blackjax), [Optax](https://github.com/google-deepmind/optax) -- in your favorite virtual environment.
+Clone this repository and install the dependencies in your favorite virtual environment.
 
 ```bash
 git clone https://github.com/gil2rok/flow_vi.git
