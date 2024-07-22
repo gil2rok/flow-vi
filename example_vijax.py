@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 from jax import random
-from vijax import models, recipes, vardists, utils
+from vijax import models, recipes, vardists
 
 sns.set_theme(style="whitegrid")
 
@@ -36,14 +36,13 @@ recipe = recipes.SimpleVI(
 # Run the recipe with a flow variational distribution
 new_q, new_w, vi_rez = recipe.run(target=model, vardist=flow_q, params=flow_w)
 
-
 # Plot the ELBO and Wasserstein distance
-# wass_dist = [float(d["Wasserstein1"]) for d in vi_rez[4]]
-# xs = [i for i in range(len(vi_rez[4]))]
-# df = pd.DataFrame({"iterations": xs, "wass_dist": wass_dist})
-# sns.relplot(x="iterations", y="wass_dist", kind="line", data=df, aspect=2)
-# plt.yscale("log")
-# plt.savefig("wass_dist_vijax_banana.png")
+wass_dist = [float(d["Wasserstein1"]) for d in vi_rez[4]]
+xs = [i for i in range(len(vi_rez[4]))]
+df = pd.DataFrame({"iterations": xs, "wass_dist": wass_dist})
+sns.relplot(x="iterations", y="wass_dist", kind="line", data=df, aspect=2)
+plt.yscale("log")
+plt.savefig("wass_dist_vijax_banana.png")
 
 # Generate random keys
 rng_key = random.PRNGKey(0)
@@ -54,14 +53,10 @@ true_key = random.PRNGKey(0)
 true_samples = random.multivariate_normal(
     true_key, jnp.array([10.0, 10.0]), jnp.eye(2) * 5.0, (10000,)
 )
-
 # Generate samples from the flow
 sample_fn = lambda key: flow_q.sample(new_w, key)
 approx_keys = random.split(approx_key, 10000)
 approx_samples = jax.vmap(sample_fn)(approx_keys)
-
-# Compute Wasserstein distance
-print(f"Wasserstein distance: {utils.wass1(true_samples, approx_samples)}")
 
 # Plot true vs approx samples
 _, axs = plt.subplots(1, 2, figsize=(10, 5), sharex=True, sharey=True)
