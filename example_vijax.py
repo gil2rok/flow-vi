@@ -27,7 +27,7 @@ flow_w = flow_q.initial_params()
 
 # Create an instance of the recipe
 recipe = recipes.SimpleVI(
-    maxiter=1_000,
+    maxiter=10_000,
     batchsize=512 * (2**10),
     step_schedule="decay",
 )
