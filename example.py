@@ -44,14 +44,7 @@ def main():
     approximator, approximator_parameters = flow, flow_parameters
     
     # Optimizer
-    scheduler = optax.scale_by_adam(
-        schedule_fn=optax.polynomial_schedule(
-            init_value=1e-3,
-            end_value=1e-4,
-            power=1.0,
-            transition_steps=num_iterations // 2,
-        )
-    )
+    scheduler = optax.cosine_decay_schedule(1e-4, num_iterations, 0.0)
     optimizer = optax.adam(learning_rate=scheduler)
 
     # VI algorithm
