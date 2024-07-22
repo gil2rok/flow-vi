@@ -10,18 +10,24 @@ from jax.typing import ArrayLike
 from .base import Bijector, Distribution
 
 
-def RealNVP() -> Bijector:
+def RealNVP(flip_mask: bool) -> Bijector:
     """A RealNVP neural network bijector with masked affine coupling layers."""
 
     def _mlp(inputs: ArrayLike, params: ArrayLikeTree) -> Array:
         x = inputs
         for w, b in params[:-1]:
-            x = jax.nn.relu(jnp.dot(x, w) + b)
+            a = jnp.dot(x, w) + b
+            x = jax.nn.leaky_relu(a, negative_slope=0.01)
         w, b = params[-1]
         return jnp.dot(x, w) + b
 
+    def _create_mask(x: Array) -> Array:
+        d = x.shape[-1]
+        mask = jnp.concatenate([jnp.ones(d // 2), jnp.zeros(d - d // 2)])
+        return 1 - mask if flip_mask else mask
+
     def fwd_and_log_det(x: ArrayLike, params: ArrayLikeTree) -> Tuple[Array, float]:
-        mask = jnp.arange(x.shape[-1]) % 2
+        mask = _create_mask(x)
         x_masked = x * mask
         x_pass = x * (1 - mask)
 
@@ -35,7 +41,7 @@ def RealNVP() -> Bijector:
         return y, log_det
 
     def inv_and_log_det(y: ArrayLike, params: ArrayLikeTree) -> Tuple[Array, float]:
-        mask = jnp.arange(y.shape[-1]) % 2
+        mask = _create_mask(y)
         y_masked = y * mask
         y_pass = y * (1 - mask)
 
@@ -85,15 +91,21 @@ def normalizing_flow(
 
     def log_density(bijector_parameters: ArrayLikeTree, x: Array) -> float:
         z, log_det = bijector.inv_and_log_det(x, bijector_parameters)
-        return base_distribution.log_density(base_parameters, z) - log_det
+        log_density = base_distribution.log_density(base_parameters, z)
+        return log_density - log_det
 
     return Distribution(sample, log_density)
 
 
 def _init_layer_parameters(
-    key: PRNGKey, input_dim: int, hidden_dims: List[int], output_dim: int
+    key: PRNGKey,
+    input_dim: int,
+    hidden_dims: List[int],
+    output_dim: int,
+    init_scale: float,
 ) -> ArrayTree:
     """Initialize parameters for a RealNVP layer with scale and translate networks."""
+    
     scale_key, translate_key = random.split(key)
 
     def init_network(net_key: PRNGKey) -> ArrayTree:
@@ -101,7 +113,7 @@ def _init_layer_parameters(
         dims = [input_dim] + hidden_dims + [output_dim]
 
         return [
-            (random.normal(k, (m, n)) / jnp.sqrt(m), jnp.zeros(n))
+            (random.normal(k, (m, n)) * init_scale, random.normal(k, (n,)) * init_scale)
             for k, m, n in zip(keys, dims[:-1], dims[1:])
         ]
 
@@ -114,11 +126,15 @@ def init_flow_parameters(
     input_dim: int,
     hidden_dims: List[int],
     output_dim: int,
+    init_scale: float,
 ) -> ArrayTree:
     """Initialize parameters for a RealNVP normalizing flow."""
 
     keys = random.split(key, num_layers)
-    return [_init_layer_parameters(k, input_dim, hidden_dims, output_dim) for k in keys]
+    return [
+        _init_layer_parameters(k, input_dim, hidden_dims, output_dim, init_scale)
+        for k in keys
+    ]
 
 
 def create_flow(
@@ -129,22 +145,24 @@ def create_flow(
     input_dim: int,
     hidden_dims: List[int],
     output_dim: int,
+    init_scale: float,
 ) -> Tuple[Distribution, ArrayTree]:
     """Create a normalizing flow distribution with multiple RealNVP layers."""
 
-    bijectors = [RealNVP() for _ in range(num_layers)]
+    # Alternate between flipping the mask for each RealNVP layer
+    bijectors = [RealNVP(flip_mask=(i % 2 == 1)) for i in range(num_layers)]
     flow_bijector = compose_bijectors(bijectors)
     flow_parameters = init_flow_parameters(
-        key, num_layers, input_dim, hidden_dims, output_dim
+        key, num_layers, input_dim, hidden_dims, output_dim, init_scale
     )
     flow = normalizing_flow(base_distribution, base_parameters, flow_bijector)
     return flow, flow_parameters
 
 
-def create_gaussian(key: PRNGKey) -> Tuple[Distribution, ArrayTree]:
+def create_gaussian(key: PRNGKey, dim: int) -> Tuple[Distribution, ArrayTree]:
     gaussian = Distribution(
         sample=lambda k, p, n: random.multivariate_normal(k, *p, (n,)),
         log_density=lambda p, s: jscipy.stats.multivariate_normal.logpdf(s, *p),
     )
-    gaussian_parameters = (random.normal(key, (2,)), jnp.eye(2))
+    gaussian_parameters = (random.normal(key, (dim,)), jnp.eye(dim))
     return gaussian, gaussian_parameters

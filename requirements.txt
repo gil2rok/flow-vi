@@ -1,3 +1,7 @@
 blackjax
 jax
 optax
+vijax
+seaborn
+pandas
+matplotlib

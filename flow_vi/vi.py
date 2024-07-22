@@ -40,13 +40,14 @@ def step(
     logdensity_fn: Callable,
     approximator: Distribution,
     optimizer: GradientTransformation,
-    num_samples: int = 10000,
+    num_samples: int = 1000,
     stl_estimator: bool = False,
 ) -> Tuple[VIState, VIInfo]:
     """Perform a single update step to the parameters of the approximate distribution."""
 
     def kl_divergence_fn(parameters: ArrayTree) -> float:
-        samples = sample(rng_key, parameters, approximator, num_samples)
+        # TODO: funky ref to approximator() vs ref in sample_fn(); assumes approximator is static
+        samples = sample(rng_key, parameters, approximator, num_samples) 
         parameters = (
             jax.tree.map(lax.stop_gradient, parameters) if stl_estimator else parameters
         )  # TODO: confirm correct implementation
@@ -71,13 +72,14 @@ def sample(
     num_samples: int = 1,
 ) -> Array:
     """Sample from the normalizing flow approximation of the target distribution."""
-    return approximator.sample(rng_key, parameters, num_samples)
+    return approximator.sample(rng_key, parameters, num_samples)  # TODO: vmap or nah?
 
 
 def as_top_level_api(
     logdensity_fn: Callable,
     optimizer: GradientTransformation,
     approximator: Distribution,
+    batch_size: int,
 ) -> VIAlgorithm:
     """Create a VIAlgorithm for generic variational inference."""
 
@@ -85,7 +87,7 @@ def as_top_level_api(
         return init(init_parameters, optimizer)
 
     def step_fn(rng_key: PRNGKey, state: VIState) -> Tuple[VIState, VIInfo]:
-        return step(rng_key, state, logdensity_fn, approximator, optimizer)
+        return step(rng_key, state, logdensity_fn, approximator, optimizer, batch_size)
 
     def sample_fn(
         rng_key: PRNGKey, parameters: ArrayLikeTree, num_samples: int = 1

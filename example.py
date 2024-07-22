@@ -1,64 +1,110 @@
+import multiprocessing
+
 import jax
 import jax.numpy as jnp
+import jax.scipy as jscipy
 import optax
 from jax import random
+import matplotlib.pyplot as plt
+from numpyro import util
+import seaborn as sns
 
 from flow_vi.normalizing_flow import create_flow, create_gaussian
 from flow_vi.vi import as_top_level_api
 
+sns.set_theme(style="whitegrid")
+
 
 def main():
+    # Setup
+    num_iterations = 100_000 
+    batch_size = 512 * (2 ** 10)
     rng_key = random.PRNGKey(0)
 
-    # Define target distribution
+    # Target distribution
     def logdensity_fn(samples):
-        return -jnp.sum(samples**2, axis=-1) / 2  # Standard normal
+        return jscipy.stats.multivariate_normal.logpdf(
+            samples, mean=jnp.array([10.0, 10.0]), cov=jnp.eye(2) * 5.0
+        )
+    logdensity_dim = 2
 
-    # Create approximator
+    # Approximator
     rng_key, gaussian_key, flow_key = random.split(rng_key, 3)
-    gaussian, gaussian_parameters = create_gaussian(gaussian_key)
+    gaussian, gaussian_parameters = create_gaussian(gaussian_key, 2)
     flow, flow_parameters = create_flow(
         key=flow_key,
         base_distribution=gaussian,
         base_parameters=gaussian_parameters,
-        num_layers=3,
-        input_dim=2,
-        hidden_dims=[16, 16],
-        output_dim=2,
+        num_layers=10,
+        input_dim=logdensity_dim,
+        hidden_dims=[32, 32],
+        output_dim=logdensity_dim,
+        init_scale=0.001,
     )
+    approximator, approximator_parameters = flow, flow_parameters
+    
+    # Optimizer
+    scheduler = optax.scale_by_adam(
+        schedule_fn=optax.polynomial_schedule(
+            init_value=1e-3,
+            end_value=1e-4,
+            power=1.0,
+            transition_steps=num_iterations // 2,
+        )
+    )
+    optimizer = optax.adam(learning_rate=scheduler)
 
-    # Create VI algorithm
+    # VI algorithm
     vi = as_top_level_api(
         logdensity_fn=logdensity_fn,
-        optimizer=optax.adam(1e-4),
-        approximator=flow,
+        optimizer=optimizer,
+        approximator=approximator,
+        batch_size=batch_size,
     )
 
-    # Initialize
-    state = vi.init(flow_parameters)
+    # Initialize VI state
+    state = vi.init(approximator_parameters)
 
-    # Training loop
+    # Train VI approximator
     @jax.jit
     def train_step(rng_key, state):
         state, info = vi.step(rng_key, state)
         return state, info.elbo
 
-    for i in range(10000):
+    for i in range(num_iterations):
         rng_key, subkey = random.split(rng_key)
         state, info = train_step(subkey, state)
         if i % 100 == 0:
             print(f"Step {i}, ELBO: {info}")
 
-    # Generate sample from the flow
+    # Generate samples from the approximator
     rng_key, sample_key = random.split(rng_key)
-    samples = vi.sample(sample_key, state.parameters, num_samples=100)
-
-    # Compare true and approximated log densities
-    true_logdensity = logdensity_fn(samples)
-    approx_logdensity = flow.log_density(state.parameters, samples)
-    mse = jnp.mean((true_logdensity - approx_logdensity) ** 2)
-    print(f"MSE btwn true and approximated log densities: {mse}")
-
+    approx_samples = vi.sample(sample_key, state.parameters, num_samples=10000)
+    
+    # Plot true vs approx samples
+    true_samples = random.multivariate_normal(
+        sample_key, jnp.array([10.0, 10.0]), jnp.eye(2) * 5.0, (10000,)
+    )
+    _, axs = plt.subplots(1, 2, figsize=(10, 5), sharex=True, sharey=True)
+    sns.histplot(
+        x=true_samples[:, 0], y=true_samples[:, 1], color="blue", ax=axs[0]
+    )
+    sns.histplot(
+        x=approx_samples[:, 0], y=approx_samples[:, 1], color="red", ax=axs[1]
+    )
+    axs[0].set_title("True samples")
+    axs[1].set_title("Approximated samples")
+    plt.savefig("hist.png")
+    
 
 if __name__ == "__main__":
+    ##### Run ON CPU #####
+    # util.set_platform("cpu")
+    # util.set_host_device_count(multiprocessing.cpu_count())
+    # print(f"Running on {jax.device_count()} CPU cores.")
+    
+    ##### RUN ON GPU #####
+    util.set_platform("gpu")
+    print(f"Running on {jax.device_count()} GPU cores.")
+    
     main()
