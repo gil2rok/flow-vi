@@ -15,7 +15,7 @@ pip install -r requirements.txt
 Then run the example script to train a RealNVP normalizing flow to learn a 2D Gaussian distribution. 
 
 ```bash
-python -m example.py
+python example.py
 ```
 
 The example runs on both GPU and CPU with multiple cores (thanks JAX!) but is much faster on a GPU.

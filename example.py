@@ -6,18 +6,18 @@ import jax.scipy as jscipy
 import optax
 from jax import random
 import matplotlib.pyplot as plt
-from numpyro import util
 import seaborn as sns
 
 from flow_vi.normalizing_flow import create_flow, create_gaussian
 from flow_vi.vi import as_top_level_api
+from flow_vi import utils
 
 sns.set_theme(style="whitegrid")
 
 
 def main():
     # Setup
-    num_iterations = 100_000 
+    num_iterations = 1_000 
     batch_size = 512 * (2 ** 10)
     rng_key = random.PRNGKey(0)
 
@@ -99,12 +99,12 @@ def main():
 
 if __name__ == "__main__":
     ##### Run ON CPU #####
-    # util.set_platform("cpu")
-    # util.set_host_device_count(multiprocessing.cpu_count())
+    # utils.set_platform("cpu")
+    # utils.set_host_device_count(multiprocessing.cpu_count())
     # print(f"Running on {jax.device_count()} CPU cores.")
     
     ##### RUN ON GPU #####
-    util.set_platform("gpu")
+    utils.set_platform("gpu")
     print(f"Running on {jax.device_count()} GPU cores.")
     
     main()
