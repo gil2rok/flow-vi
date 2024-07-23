@@ -9,8 +9,8 @@ from vijax import models, recipes, vardists, utils
 sns.set_theme(style="whitegrid")
 
 # Get model
-model = models.Banana(2)
-# model = models.Funnel(2) 
+model = models.NealsFunnel(2) 
+# model = models.Banana(2)
 # model = models.QuickGaussian(jnp.array([10.0, 10.0]), jnp.linalg.cholesky(jnp.eye(2) * 5.0), 2) # 2D Normal(10, 5)
 
 # Get variational distribution
@@ -35,7 +35,7 @@ recipe = recipes.SimpleVI(
 # Run the recipe with a flow variational distribution
 new_q, new_w, vi_rez = recipe.run(target=model, vardist=flow_q, params=flow_w)
 
-# Plot the ELBO and Wasserstein distance
+# [modified VI-JAX dependency] Plot the ELBO and Wasserstein distance
 # wass_dist = [float(d["Wasserstein1"]) for d in vi_rez[4]]
 # xs = [i for i in range(len(vi_rez[4]))]
 # df = pd.DataFrame({"iterations": xs, "wass_dist": wass_dist})
@@ -43,18 +43,15 @@ new_q, new_w, vi_rez = recipe.run(target=model, vardist=flow_q, params=flow_w)
 # plt.yscale("log")
 # plt.savefig("wass_dist_vijax_banana.png")
 
-# Generate random keys
-rng_key = random.PRNGKey(0)
-approx_key, true_key = random.split(rng_key)
-
 # Generate samples from the true distribution
 true_key = random.PRNGKey(0)
-true_samples = model.reference_samples(10000)
+true_samples = model.reference_samples(10000, key=true_key)
 
 # Generate samples from the flow
-sample_fn = lambda key: flow_q.sample(new_w, key)
-approx_keys = random.split(approx_key, 10000)
-approx_samples = jax.vmap(sample_fn)(approx_keys)
+approx_keys = random.split(random.PRNGKey(1), 10000)
+approx_samples = jax.vmap(flow_q.sample, in_axes=(None, 0))(new_w, approx_keys)
+# sample_fn = lambda key: flow_q.sample(new_w, key)
+# approx_samples = jax.vmap(sample_fn)(approx_keys)
 
 # Compute Wasserstein distance
 print(f"Wasserstein distance: {utils.wass1(true_samples, approx_samples)}")
