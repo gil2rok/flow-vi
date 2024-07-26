@@ -4,6 +4,7 @@ import re
 import jax
 import jax.numpy as jnp
 
+
 def wasserstein_distance(x, y):
     """Efficient 1D Wasserstein distance."""
     return jnp.mean(jnp.abs(jnp.sort(x, axis=0) - jnp.sort(y, axis=0)))
@@ -13,16 +14,16 @@ class NumpyroModelWrapper:
     def __init__(self, model, data):
         self.model = model
         self.data = data
-        
+
     def logdensity_fn(self, samples):
         return self.model(samples, self.data)
-    
+
     def constrain(self, params):
         return self.model.constrain(params)
-    
+
     def unconstrain(self, params):
         return self.model.unconstrain(params)
-    
+
     @property
     def dimension(self):
         return self.model.dimension

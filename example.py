@@ -1,18 +1,16 @@
 import multiprocessing
-from typing import Callable
 
-from blackjax.types import PRNGKey, ArrayLikeTree
 import jax
 import jax.numpy as jnp
 import jax.scipy as jscipy
-import optax
-from jax import random
 import matplotlib.pyplot as plt
+import optax
 import seaborn as sns
+from jax import random
 
+from flow_vi import utils
 from flow_vi.normalizing_flow import create_flow, create_gaussian
 from flow_vi.vi import as_top_level_api
-from flow_vi import utils
 
 sns.set_theme(style="whitegrid")
 

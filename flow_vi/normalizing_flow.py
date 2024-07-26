@@ -105,7 +105,7 @@ def _init_layer_parameters(
     init_scale: float,
 ) -> ArrayTree:
     """Initialize parameters for a RealNVP layer with scale and translate networks."""
-    
+
     scale_key, translate_key = random.split(key)
 
     def init_network(net_key: PRNGKey) -> ArrayTree:

@@ -4,21 +4,21 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 from jax import random
-from vijax import models, recipes, vardists, utils
+from vijax import models, recipes, utils, vardists
 
 sns.set_theme(style="whitegrid")
 
 # Get model
-# model = models.NealsFunnel(2) 
+# model = models.NealsFunnel(2)
 model = models.Banana(2)
 # model = models.QuickGaussian(jnp.array([10.0, 10.0]), jnp.linalg.cholesky(jnp.eye(2) * 5.0), 2) # 2D Normal(10, 5)
 
 # Get variational distribution
 flow_q = vardists.RealNVP(
-    model.ndim, # dimension of the target distribution
-    num_transformations=10, # number of coupled RealNVP layers where each coupling consist of two RealNVP layers that alternate btwn which half of the data is masked
-    num_hidden_units=32, # number of neurons in each hidden layer of the scale and translate networks
-    num_hidden_layers=2, # number of hidden layers in each scale and translate network
+    model.ndim,  # dimension of the target distribution
+    num_transformations=10,  # number of coupled RealNVP layers where each coupling consist of two RealNVP layers that alternate btwn which half of the data is masked
+    num_hidden_units=32,  # number of neurons in each hidden layer of the scale and translate networks
+    num_hidden_layers=2,  # number of hidden layers in each scale and translate network
     params_init_scale=0.001,
 )
 

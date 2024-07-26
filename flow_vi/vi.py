@@ -47,7 +47,7 @@ def step(
 
     def kl_divergence_fn(parameters: ArrayTree) -> float:
         # TODO: funky ref to approximator() vs ref in sample_fn(); assumes approximator is static
-        samples = sample(rng_key, parameters, approximator, num_samples) 
+        samples = sample(rng_key, parameters, approximator, num_samples)
         parameters = (
             jax.tree.map(lax.stop_gradient, parameters) if stl_estimator else parameters
         )  # TODO: confirm correct implementation
