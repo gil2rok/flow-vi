@@ -2,6 +2,11 @@ import os
 import re
 
 import jax
+import jax.numpy as jnp
+
+def wasserstein_distance(x, y):
+    """Efficient 1D Wasserstein distance."""
+    return jnp.mean(jnp.abs(jnp.sort(x, axis=0) - jnp.sort(y, axis=0)))
 
 
 class NumpyroModelWrapper:

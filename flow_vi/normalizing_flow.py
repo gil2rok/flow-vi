@@ -152,10 +152,10 @@ def create_flow(
     # Alternate between flipping the mask for each RealNVP layer
     bijectors = [RealNVP(flip_mask=(i % 2 == 1)) for i in range(num_layers)]
     flow_bijector = compose_bijectors(bijectors)
+    flow = normalizing_flow(base_distribution, base_parameters, flow_bijector)
     flow_parameters = init_flow_parameters(
         key, num_layers, input_dim, hidden_dims, output_dim, init_scale
     )
-    flow = normalizing_flow(base_distribution, base_parameters, flow_bijector)
     return flow, flow_parameters
 
 
@@ -164,5 +164,6 @@ def create_gaussian(key: PRNGKey, dim: int) -> Tuple[Distribution, ArrayTree]:
         sample=lambda k, p, n: random.multivariate_normal(k, *p, (n,)),
         log_density=lambda p, s: jscipy.stats.multivariate_normal.logpdf(s, *p),
     )
-    gaussian_parameters = (random.normal(key, (dim,)), jnp.eye(dim))
+    # gaussian_parameters = (random.normal(key, (dim,)), jnp.eye(dim))
+    gaussian_parameters = (jnp.zeros(dim), jnp.eye(dim))
     return gaussian, gaussian_parameters
