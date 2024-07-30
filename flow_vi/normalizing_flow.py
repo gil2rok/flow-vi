@@ -160,10 +160,10 @@ def create_flow(
 
 
 def create_gaussian(key: PRNGKey, dim: int) -> Tuple[Distribution, ArrayTree]:
-    gaussian = Distribution(
-        sample=lambda k, p, n: random.multivariate_normal(k, *p, (n,)),
-        log_density=lambda p, s: jscipy.stats.multivariate_normal.logpdf(s, *p),
-    )
+    # TODO: implement reparameterization trick 
+    sample = lambda k, p, n: random.multivariate_normal(k, *p, (n,))
+    log_density = lambda p, s: jscipy.stats.multivariate_normal.logpdf(s, *p)
+    gaussian = Distribution(sample, log_density)
     # gaussian_parameters = (random.normal(key, (dim,)), jnp.eye(dim))
     gaussian_parameters = (jnp.zeros(dim), jnp.eye(dim))
     return gaussian, gaussian_parameters

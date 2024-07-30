@@ -5,9 +5,12 @@ from jax.typing import ArrayLike
 
 
 class SampleFn(Protocol):
+    # TODO: consider generating only *one* sample with a PRNGKey and move batching
+    # functionality (via vmap) + PRNGKey splitting to vi module
     def __call__(
         self, rng_key: PRNGKey, parameters: ArrayLikeTree, num_samples: int
     ) -> ArrayTree: ...
+    # Must generate `num_samples` samples with PRNGKey splitting and efficient batching (often vmap)
 
 
 class LogDensityFn(Protocol):

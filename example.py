@@ -52,8 +52,7 @@ def main():
     approximator, approximator_parameters = flow, flow_parameters
 
     # Optimizer
-    scheduler = optax.cosine_decay_schedule(1e-3, num_iterations, 0)
-    optimizer = optax.adam(learning_rate=scheduler)
+    optimizer = optax.adam(3e-3)
 
     # Wasserstein distance
     def compute_wasserstein_distance(rng_key, parameters, n_samples=batch_size):

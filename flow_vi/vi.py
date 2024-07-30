@@ -2,6 +2,7 @@ from typing import Callable, NamedTuple, Tuple
 
 import jax
 import jax.numpy as jnp
+import optax
 from blackjax.base import VIAlgorithm
 from blackjax.types import Array, ArrayLikeTree, ArrayTree, PRNGKey
 from jax import lax
@@ -45,24 +46,25 @@ def step(
 ) -> Tuple[VIState, VIInfo]:
     """Perform a single update step to the parameters of the approximate distribution."""
 
-    def kl_divergence_fn(parameters: ArrayTree) -> float:
-        # TODO: funky ref to approximator() vs ref in sample_fn(); assumes approximator is static
-        samples = sample(rng_key, parameters, approximator, num_samples)
-        parameters = (
-            jax.tree.map(lax.stop_gradient, parameters) if stl_estimator else parameters
-        )  # TODO: confirm correct implementation
-        approx_logdensity_fn = lambda s: approximator.log_density(parameters, s)
-
-        log_q = jax.vmap(approx_logdensity_fn)(samples)
+    def negative_elbo_fn(parameters: ArrayTree) -> float:
+        """Compute the negative Evidence Lower BOund (-ELBO), proportional to the KL 
+        divergence between the approximate distribution and the target distribution."""
+        samples = approximator.sample(rng_key, parameters, num_samples)
+        if stl_estimator:  # TODO: confirm correct implementation
+            parameters = jax.tree.map(lax.stop_gradient, parameters)
+        
+        log_q = jax.vmap(approximator.log_density, in_axes=(None, 0))(
+            parameters, samples
+        )
         log_p = jax.vmap(logdensity_fn)(samples)
         return jnp.mean(log_q - log_p)
 
-    elbo, elbo_grad = jax.value_and_grad(kl_divergence_fn)(state.parameters)
+    neg_elbo, neg_elbo_grad = jax.value_and_grad(negative_elbo_fn)(state.parameters)
     updates, new_opt_state = optimizer.update(
-        elbo_grad, state.opt_state, state.parameters
+        neg_elbo_grad, state.opt_state, state.parameters
     )
-    new_parameters = jax.tree.map(lambda p, u: p + u, state.parameters, updates)
-    return VIState(new_parameters, new_opt_state), VIInfo(-elbo)
+    new_parameters = optax.apply_updates(state.parameters, updates)
+    return VIState(new_parameters, new_opt_state), VIInfo(-neg_elbo)
 
 
 def sample(

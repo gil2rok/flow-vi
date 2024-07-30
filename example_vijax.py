@@ -28,8 +28,11 @@ flow_w = flow_q.initial_params()
 # Create an instance of the recipe
 recipe = recipes.SimpleVI(
     maxiter=10_000,
-    batchsize=512 * (2**10),
-    step_schedule="decay",
+    batchsize=128,
+    reg=None,
+    step_schedule="constant",
+    init_override="naive",
+    elbo=recipes.NaiveELBO  # TODO: accessed via vijax src code modification
 )
 
 # Run the recipe with a flow variational distribution
