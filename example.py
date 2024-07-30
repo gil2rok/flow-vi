@@ -49,7 +49,7 @@ def main():
         output_dim=logdensity_dim,
         init_scale=1e-3,
     )
-    approximator, approximator_parameters = flow, flow_parameters
+    approximator, approximator_parameters = gaussian, gaussian_parameters
 
     # Optimizer
     optimizer = optax.adam(3e-3)
@@ -92,8 +92,8 @@ def main():
     # Plot true vs approx samples
     true_samples = sample_fn(sample_key, 10000)
     _, axs = plt.subplots(1, 2, figsize=(10, 5), sharex=True, sharey=True)
-    sns.histplot(x=true_samples[:, 0], y=true_samples[:, 1], color="blue", ax=axs[0])
-    sns.histplot(x=approx_samples[:, 0], y=approx_samples[:, 1], color="red", ax=axs[1])
+    sns.scatterplot(x=true_samples[:, 0], y=true_samples[:, 1], color="blue", ax=axs[0])
+    sns.scatterplot(x=approx_samples[:, 0], y=approx_samples[:, 1], color="red", ax=axs[1])
     axs[0].set_title("True samples")
     axs[1].set_title("Approximated samples")
     plt.savefig("hist.png")

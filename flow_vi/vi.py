@@ -45,7 +45,7 @@ def step(
     stl_estimator: bool = False,
 ) -> Tuple[VIState, VIInfo]:
     """Perform a single update step to the parameters of the approximate distribution."""
-
+    
     def negative_elbo_fn(parameters: ArrayTree) -> float:
         """Compute the negative Evidence Lower BOund (-ELBO), proportional to the KL 
         divergence between the approximate distribution and the target distribution."""
@@ -74,7 +74,7 @@ def sample(
     num_samples: int = 1,
 ) -> Array:
     """Sample from the normalizing flow approximation of the target distribution."""
-    return approximator.sample(rng_key, parameters, num_samples)  # TODO: vmap or nah?
+    return approximator.sample(rng_key, parameters, num_samples)
 
 
 def as_top_level_api(

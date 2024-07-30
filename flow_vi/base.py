@@ -10,7 +10,11 @@ class SampleFn(Protocol):
     def __call__(
         self, rng_key: PRNGKey, parameters: ArrayLikeTree, num_samples: int
     ) -> ArrayTree: ...
-    # Must generate `num_samples` samples with PRNGKey splitting and efficient batching (often vmap)
+    """Must generate `num_samples` samples with efficient batching (vmap) and correct 
+    handling of PRNGKey keys (splitting).
+    
+    Note some functions handle batching and PRNGKey splitting internally e.g. 
+    `jax.random.normal()`."""
 
 
 class LogDensityFn(Protocol):

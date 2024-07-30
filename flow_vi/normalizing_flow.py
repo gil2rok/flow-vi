@@ -160,10 +160,23 @@ def create_flow(
 
 
 def create_gaussian(key: PRNGKey, dim: int) -> Tuple[Distribution, ArrayTree]:
-    # TODO: implement reparameterization trick 
-    sample = lambda k, p, n: random.multivariate_normal(k, *p, (n,))
-    log_density = lambda p, s: jscipy.stats.multivariate_normal.logpdf(s, *p)
+    """Create a Gaussian distribution parameterized by mean and log standard deviation.
+    
+    Parameterized by log standard deviation to ensure positivity via exponentiation. 
+    Log standard deviation defines a covariance matrix with *diagonal* entries only.
+    Samples are generated with the reparameterization trick."""
+
+    def sample(key: PRNGKey, params: ArrayLikeTree, num_samples: int) -> ArrayTree:
+        mean, std = params["mean"], jnp.exp(params["log_std"])
+        eps = random.normal(key, (num_samples, dim))
+        return eps * std + mean  # reparameterization trick
+    
+    def log_density(params: ArrayLikeTree, samples: ArrayLikeTree) -> Array:
+        mean, std = params["mean"], jnp.exp(params["log_std"])
+        return jscipy.stats.multivariate_normal.logpdf(
+            samples, mean, jnp.diag(std ** 2)
+        )
+    
     gaussian = Distribution(sample, log_density)
-    # gaussian_parameters = (random.normal(key, (dim,)), jnp.eye(dim))
-    gaussian_parameters = (jnp.zeros(dim), jnp.eye(dim))
+    gaussian_parameters = {"mean": jnp.zeros(dim), "log_std": jnp.zeros(dim)}  # Normal(0, I)
     return gaussian, gaussian_parameters
